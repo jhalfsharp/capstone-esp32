@@ -29,6 +29,7 @@
 #include "esp_now.h"
 #include "esp_crc.h"
 #include "espnow_types.h"
+#include "driver/gpio.h"
 
 #define ESPNOW_MAXDELAY 512
 
@@ -41,8 +42,8 @@ static uint16_t s_example_espnow_seq[EXAMPLE_ESPNOW_DATA_MAX] = { 0, 0 };
 
 static void example_espnow_deinit(example_espnow_send_param_t *send_param);
 
-static uint16_t recent_key_value = 0;
-static uint16_t send_key_value = 0;
+static uint8_t leak_time = 0;
+static uint16_t key_value = 0;
 
 /* WiFi should start before using ESPNOW */
 static void example_wifi_init(void)
@@ -83,16 +84,14 @@ static void example_espnow_send_cb(const esp_now_send_info_t *tx_info, esp_now_s
 }
 
 static void example_espnow_recv_cb(const esp_now_recv_info_t *recv_info, const uint8_t *data, int len)
-{   
-    //ESP_LOGI(TAG, "this is the recieve cb :3");
-
+{
     example_espnow_event_t evt;
     example_espnow_event_recv_cb_t *recv_cb = &evt.info.recv_cb;
     uint8_t * mac_addr = recv_info->src_addr;
     uint8_t * des_addr = recv_info->des_addr;
 
     if (mac_addr == NULL || data == NULL || len <= 0) {
-        ESP_LOGI(TAG, "Receive cb arg error");
+        ESP_LOGE(TAG, "Receive cb arg error");
         return;
     }
 
@@ -143,32 +142,27 @@ int example_espnow_data_parse(uint8_t *data, uint16_t data_len)
     return -1;
 }
 
-int unicast_espnow_data_parse(uint8_t *data, uint16_t data_len)
+int broadcast_espnow_data_parse(uint8_t *data, uint16_t data_len)
 {
+    espnow_broadcast_data_t *buf = (espnow_broadcast_data_t *)data;
     uint16_t crc, crc_cal = 0;
-    uint8_t type = 0;
-    if (data_len < 5) {
+
+    if (data_len < sizeof(espnow_broadcast_data_t)) {
         ESP_LOGE(TAG, "Receive ESPNOW data too short, len:%d", data_len);
         return -1;
     }
-    type = data[4];
-    if(type == UNICAST_TYPE_LEAK) {
-        espnow_leak_data_t *buf = (espnow_leak_data_t *)data;
-        uint16_t crc, crc_cal = 0;
-        crc = buf->crc;
-        buf->crc = 0;
-        crc_cal = esp_crc16_le(UINT16_MAX, (uint8_t const *)buf, sizeof(espnow_leak_data_t));
-        if (crc_cal == crc) {
-            recent_key_value = buf->key;
-            if (buf->leak_data == LEAK_DETECTED) {
-                ESP_LOGI(TAG, "Leak detected!");
-            }
-            return 1;
-        }
-        return -1;
+
+    crc = buf->crc;
+    buf->crc = 0;
+    crc_cal = esp_crc16_le(UINT16_MAX, (uint8_t const *)buf, sizeof(espnow_broadcast_data_t));
+
+    if (crc_cal == crc) {
+        key_value = buf->key;
+        return 1;
     }
 
     return -1;
+
 }
 
 /* Prepare ESPNOW data to be sent. */
@@ -184,15 +178,14 @@ void example_espnow_data_prepare(example_espnow_send_param_t *send_param)
     buf->crc = esp_crc16_le(UINT16_MAX, (uint8_t const *)buf, send_param->len);
 }
 
-void broadcast_espnow_data_prepare(example_espnow_send_param_t *send_param)
+void leak_data_prepare(example_espnow_send_param_t *send_param)
 {
-    espnow_broadcast_data_t *buf = (espnow_broadcast_data_t *)send_param->buffer;
-    assert(send_param->len >= sizeof(espnow_broadcast_data_t));
-    buf->key = send_param->key;
-    //ESP_LOGI(TAG, "%d", buf->key);
-
+    espnow_leak_data_t *buf = (espnow_leak_data_t *)send_param->buffer;
     buf->crc = 0;
-    buf->crc = esp_crc16_le(UINT16_MAX, (uint8_t const *)buf, sizeof(espnow_broadcast_data_t));
+    buf->key = send_param->key;
+    buf->type = UNICAST_TYPE_LEAK;
+    buf->leak_data = leak_time <= 3 ? LEAK_DETECTED : LEAK_NOT_DETECTED;
+    buf->crc = esp_crc16_le(UINT16_MAX, (uint8_t const *)buf, sizeof(espnow_leak_data_t));
 }
 
 static void example_espnow_task(void *pvParameter)
@@ -204,58 +197,80 @@ static void example_espnow_task(void *pvParameter)
     bool is_broadcast = false;
     int ret;
 
-    vTaskDelay(5000 / portTICK_PERIOD_MS);
-    ESP_LOGI(TAG, "Start sending broadcast data");
+    ESP_LOGI(TAG, "Waiting on broadcast data");
 
-    /* Start sending broadcast ESPNOW data. */
     example_espnow_send_param_t *send_param = (example_espnow_send_param_t *)pvParameter;
-    if (esp_now_send(send_param->dest_mac, send_param->buffer, send_param->len) != ESP_OK) {
-        ESP_LOGE(TAG, "Send error");
-        example_espnow_deinit(send_param);
-        vTaskDelete(NULL);
-    }
+
 
     while (xQueueReceive(s_example_espnow_queue, &evt, portMAX_DELAY) == pdTRUE) {
         switch (evt.id) {
             case EXAMPLE_ESPNOW_SEND_CB:
             {
+                /*
                 example_espnow_event_send_cb_t *send_cb = &evt.info.send_cb;
+                is_broadcast = IS_BROADCAST_ADDR(send_cb->mac_addr);
 
                 ESP_LOGD(TAG, "Send data to "MACSTR", status1: %d", MAC2STR(send_cb->mac_addr), send_cb->status);
 
-                /* Delay a while before sending the next data. */
-                if (send_param->delay > 0) {
-                    vTaskDelay(send_param->delay/portTICK_PERIOD_MS);
-                }
 
-                send_key_value++;
-                if(send_key_value > recent_key_value + 5) {
-                    ESP_LOGI(TAG, "Lost connection! %d %d", send_key_value, recent_key_value);
-                }
-
-
-                //ESP_LOGI(TAG, "send data to "MACSTR"", MAC2STR(send_cb->mac_addr));
-
-                send_param->key = send_key_value;
-                memcpy(send_param->dest_mac, send_cb->mac_addr, ESP_NOW_ETH_ALEN);
-                broadcast_espnow_data_prepare(send_param);
+                
+                ESP_LOGI(TAG, "send data to "MACSTR"", MAC2STR(send_cb->mac_addr));
+                */
 
                 /* Send the next data after the previous data is sent. */
-                if (esp_now_send(send_param->dest_mac, send_param->buffer, send_param->len) != ESP_OK) {
-                    ESP_LOGE(TAG, "Send error");
-                    example_espnow_deinit(send_param);
-                    vTaskDelete(NULL);
-                }
+                
                 break;
             }
             case EXAMPLE_ESPNOW_RECV_CB:
             {
                 example_espnow_event_recv_cb_t *recv_cb = &evt.info.recv_cb;
 
-                ret = unicast_espnow_data_parse(recv_cb->data, recv_cb->data_len);
+                ret = broadcast_espnow_data_parse(recv_cb->data, recv_cb->data_len);
                 free(recv_cb->data);
                 if (ret == 1) {
-                    ESP_LOGI(TAG, "Receive unicast data from: "MACSTR"", MAC2STR(recv_cb->mac_addr));
+                    ESP_LOGI(TAG, "Receive %dth broadcast data from: "MACSTR", len: %d", recv_seq, MAC2STR(recv_cb->mac_addr), recv_cb->data_len);
+
+                    /* If MAC address does not exist in peer list, add it to peer list. */
+                    if (esp_now_is_peer_exist(recv_cb->mac_addr) == false) {
+                        esp_now_peer_info_t *peer = malloc(sizeof(esp_now_peer_info_t));
+                        if (peer == NULL) {
+                            ESP_LOGE(TAG, "Malloc peer information fail");
+                            example_espnow_deinit(send_param);
+                            vTaskDelete(NULL);
+                        }
+                        memset(peer, 0, sizeof(esp_now_peer_info_t));
+                        peer->channel = CONFIG_ESPNOW_CHANNEL;
+                        peer->ifidx = ESPNOW_WIFI_IF;
+                        peer->encrypt = false;
+                        memcpy(peer->lmk, CONFIG_ESPNOW_LMK, ESP_NOW_KEY_LEN);
+                        memcpy(peer->peer_addr, recv_cb->mac_addr, ESP_NOW_ETH_ALEN);
+                        ESP_ERROR_CHECK( esp_now_add_peer(peer) );
+                        free(peer);
+                    }
+
+                    /* Indicates that the device has received broadcast ESPNOW data. */
+                    if (send_param->state == 0) {
+                        send_param->state = 1;
+                    }
+
+                    
+                    
+                    //ESP_LOGI(TAG, "Start sending unicast data");
+                    ESP_LOGI(TAG, "send data to "MACSTR"", MAC2STR(recv_cb->mac_addr));
+
+                    /* Start sending unicast ESPNOW data. */
+                    memcpy(send_param->dest_mac, recv_cb->mac_addr, ESP_NOW_ETH_ALEN);
+                    send_param->key = key_value;
+                    ESP_LOGI(TAG, "%d", key_value);
+                    leak_data_prepare(send_param);
+                    if (esp_now_send(send_param->dest_mac, send_param->buffer, send_param->len) != ESP_OK) {
+                        ESP_LOGI(TAG, "Send error");
+                        example_espnow_deinit(send_param);
+                        vTaskDelete(NULL);
+                    } else {
+                        //ESP_LOGI(TAG, "Send success :3");
+                    }
+                    
                 }
                 else {
                     ESP_LOGI(TAG, "Receive error data from: "MACSTR"", MAC2STR(recv_cb->mac_addr));
@@ -322,7 +337,6 @@ static esp_err_t example_espnow_init(void)
     send_param->state = 0;
     send_param->magic = esp_random();
     send_param->count = CONFIG_ESPNOW_SEND_COUNT;
-    send_param->delay = CONFIG_ESPNOW_SEND_DELAY;
     send_param->key = 0;
     send_param->len = sizeof(example_espnow_data_t);
     send_param->buffer = malloc(CONFIG_ESPNOW_SEND_LEN);
@@ -351,6 +365,35 @@ static void example_espnow_deinit(example_espnow_send_param_t *send_param)
     esp_now_deinit();
 }
 
+#define ESP_INTR_FLAG_DEFAULT 0
+
+static QueueHandle_t gpio_evt_queue = NULL;
+
+static void IRAM_ATTR gpio_isr_handler(void* arg)
+{
+    uint32_t gpio_num = (uint32_t) arg;
+    xQueueSendFromISR(gpio_evt_queue, &gpio_num, NULL);
+}
+
+#define GPIO_OUTPUT_PIN_SEL  (1ULL<< CONFIG_GPIO_OUTPUT_0)
+#define GPIO_INPUT_PIN_SEL  (1ULL<< CONFIG_GPIO_INPUT_0)
+
+static void gpio_task_example(void* arg)
+{
+    uint32_t io_num;
+    for (;;) {
+        if (xQueueReceive(gpio_evt_queue, &io_num, portMAX_DELAY)) {
+            //printf("GPIO[%"PRIu32"] intr, val: %d\n", io_num, gpio_get_level(io_num));
+            if(gpio_get_level(io_num) == 0) {
+                leak_time = 0;
+                printf("leak detected!\n");
+            } else {
+                leak_time ++;
+            }
+        }
+    }
+}
+
 void app_main(void)
 {
     // Initialize NVS
@@ -363,4 +406,54 @@ void app_main(void)
 
     example_wifi_init();
     example_espnow_init();
+
+    //zero-initialize the config structure.
+    gpio_config_t io_conf = {};
+    //disable interrupt
+    io_conf.intr_type = GPIO_INTR_DISABLE;
+    //set as output mode
+    io_conf.mode = GPIO_MODE_OUTPUT;
+    //bit mask of the pins that you want to set,e.g.GPIO18/19
+    io_conf.pin_bit_mask = GPIO_OUTPUT_PIN_SEL;
+    //disable pull-down mode
+    io_conf.pull_down_en = GPIO_PULLDOWN_DISABLE;
+    //disable pull-up mode
+    io_conf.pull_up_en = GPIO_PULLUP_DISABLE;
+    //configure GPIO with the given settings
+    gpio_config(&io_conf);
+
+    //interrupt of rising edge
+    io_conf.intr_type = GPIO_INTR_POSEDGE;
+    //bit mask of the pins, use GPIO4/5 here
+    io_conf.pin_bit_mask = GPIO_INPUT_PIN_SEL;
+    //set as input mode
+    io_conf.mode = GPIO_MODE_INPUT;
+    //enable pull-up mode
+    io_conf.pull_up_en = GPIO_PULLUP_ENABLE;
+    gpio_config(&io_conf);
+
+    //change gpio interrupt type for one pin
+    gpio_set_intr_type(CONFIG_GPIO_INPUT_0, GPIO_INTR_ANYEDGE);
+
+    //create a queue to handle gpio event from isr
+    gpio_evt_queue = xQueueCreate(10, sizeof(uint32_t));
+    //start gpio task
+    xTaskCreate(gpio_task_example, "gpio_task_example", 2048, NULL, 10, NULL);
+
+    //install gpio isr service
+    gpio_install_isr_service(ESP_INTR_FLAG_DEFAULT);
+    //hook isr handler for specific gpio pin
+    gpio_isr_handler_add(CONFIG_GPIO_INPUT_0, gpio_isr_handler, (void*) CONFIG_GPIO_INPUT_0);
+
+    printf("Minimum free heap size: %"PRIu32" bytes\n", esp_get_minimum_free_heap_size());
+
+
+    gpio_set_level(CONFIG_GPIO_OUTPUT_0, 0);
+
+    int cnt = 0;
+    while (1) {
+        printf("cnt: %d\n", cnt++);
+        vTaskDelay(1000 / portTICK_PERIOD_MS);
+        gpio_set_level(CONFIG_GPIO_OUTPUT_0, cnt % 2);
+    }
 }

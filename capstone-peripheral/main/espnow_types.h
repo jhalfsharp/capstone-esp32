@@ -56,11 +56,32 @@ enum {
     EXAMPLE_ESPNOW_DATA_MAX,
 };
 
+#define UNICAST_TYPE_LEAK 0
+#define UNICAST_TYPE_ENVIRONMENT 1
+
 /* User defined field of ESPNOW data in this example. */
 typedef struct {
     uint16_t crc;                         //CRC16 value of ESPNOW data.
-    uint8_t payload[10];                   //Real payload of ESPNOW data.
+    uint8_t type;                         //Response type
+    uint8_t key;                          //Broadcast idempotency key
+    uint8_t payload[8];                   //Real payload of ESPNOW data.
 } __attribute__((packed)) example_espnow_data_t;
+
+#define LEAK_NOT_DETECTED 0
+#define LEAK_DETECTED 1
+#define LEAK_ERROR 2
+
+typedef struct {
+    uint16_t crc;                         //CRC16 value of ESPNOW data.
+    uint16_t key;                          //Broadcast idempotency key
+    uint8_t type;                         //Response type
+    uint8_t leak_data;                   //Leak sensor data.
+} __attribute__((packed)) espnow_leak_data_t;
+
+typedef struct {
+    uint16_t crc;
+    uint16_t key;
+} __attribute__((packed)) espnow_broadcast_data_t;
 
 /* Parameters of sending ESPNOW data. */
 typedef struct {
@@ -70,6 +91,7 @@ typedef struct {
     uint32_t magic;                       //Magic number which is used to determine which device to send unicast ESPNOW data.
     uint16_t count;                       //Total count of unicast ESPNOW data to be sent.
     uint16_t delay;                       //Delay between sending two ESPNOW data, unit: ms.
+    uint16_t key;
     int len;                              //Length of ESPNOW data to be sent, unit: byte.
     uint8_t *buffer;                      //Buffer pointing to ESPNOW data.
     uint8_t dest_mac[ESP_NOW_ETH_ALEN];   //MAC address of destination device.
