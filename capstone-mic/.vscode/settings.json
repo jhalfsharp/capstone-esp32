@@ -1,0 +1,12 @@
+{
+  "C_Cpp.intelliSenseEngine": "default",
+  "clangd.path": "C:\\Espressif\\tools\\esp-clang\\esp-19.1.2_20250312\\esp-clang\\bin\\clangd.exe",
+  "clangd.arguments": [
+    "--background-index",
+    "--query-driver=**",
+    "--compile-commands-dir=c:\\Users\\LI\\Desktop\\ESPTry\\sharedSHA\\capstone-esp32\\capstone-mic\\build"
+  ],
+  "idf.currentSetup": "C:\\Users\\LI\\Desktop\\ESPTry\\ESPVersionSource\\.espressif\\v5.5.3\\esp-idf",
+  "idf.flashType": "UART",
+  "idf.portWin": "COM14"
+}
