@@ -1,0 +1,2 @@
+source /home/yuchenliu735/BME280/build/bootloader/gdbinit/symbols
+source /home/yuchenliu735/BME280/build/bootloader/gdbinit/connect
