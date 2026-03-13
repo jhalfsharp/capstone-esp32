@@ -1,0 +1,2 @@
+source /home/yuchenliu735/PIR/build/bootloader/gdbinit/symbols
+source /home/yuchenliu735/PIR/build/bootloader/gdbinit/connect
