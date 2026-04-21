@@ -1,2 +1,2 @@
-source /home/yuchenliu735/BME280/build/gdbinit/symbols
-source /home/yuchenliu735/BME280/build/gdbinit/connect
+source /home/june/Documents/projects/capstone-esp32/capstone-BME280/build/gdbinit/symbols
+source /home/june/Documents/projects/capstone-esp32/capstone-BME280/build/gdbinit/connect

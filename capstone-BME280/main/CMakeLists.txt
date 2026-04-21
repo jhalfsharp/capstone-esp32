@@ -1,3 +1,4 @@
 idf_component_register(SRCS "BME280_main.c"
-                       INCLUDE_DIRS "."
-                       REQUIRES driver)
+                    PRIV_REQUIRES nvs_flash esp_event esp_netif esp_wifi
+                    INCLUDE_DIRS "."
+                    REQUIRES driver)

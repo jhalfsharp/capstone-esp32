@@ -72,11 +72,20 @@ typedef struct {
 #define LEAK_ERROR 2
 
 typedef struct {
-    uint16_t crc;                         //CRC16 value of ESPNOW data.
-    uint16_t key;                          //Broadcast idempotency key
-    uint8_t type;                         //Response type
-    uint8_t leak_data;                   //Leak sensor data.
+    uint16_t crc;                           //CRC16 value of ESPNOW data.
+    uint16_t key;                           //Broadcast idempotency key
+    uint8_t type;                           //Response type
+    uint8_t leak_data;                      //Leak sensor data.
 } __attribute__((packed)) espnow_leak_data_t;
+
+typedef struct {
+    uint16_t crc;                           //CRC16 value of ESPNOW data.
+    uint16_t key;                           //Broadcast idempotency key
+    uint8_t type;                           //Response type
+    float temperature;                      //temperature
+    float pressure;                         //pressure
+    float humidity;                         //humidity
+} __attribute__((packed)) espnow_environment_data_t;
 
 typedef struct {
     uint16_t crc;

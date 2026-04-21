@@ -1,4 +1,4 @@
-/* * Data converted from /home/yuchenliu735/BME280/build/esp-idf/mbedtls/x509_crt_bundle
+/* * Data converted from /home/june/Documents/projects/capstone-esp32/capstone-BME280/build/esp-idf/mbedtls/x509_crt_bundle
  */
 .data
 #if !defined (__APPLE__) && !defined (__linux__)

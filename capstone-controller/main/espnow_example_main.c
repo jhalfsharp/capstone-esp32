@@ -20,6 +20,8 @@
 #include "freertos/semphr.h"
 #include "freertos/timers.h"
 #include "nvs_flash.h"
+
+#include "esp_system.h"
 #include "esp_random.h"
 #include "esp_event.h"
 #include "esp_netif.h"
@@ -30,7 +32,13 @@
 #include "esp_crc.h"
 #include "espnow_types.h"
 
+#include "driver/uart.h"
+#include "driver/gpio.h"
+
 #define ESPNOW_MAXDELAY 512
+
+#define TXD_PIN (CONFIG_UART_TXD)
+#define RXD_PIN (CONFIG_UART_RXD)
 
 static const char *TAG = "espnow_example";
 
@@ -43,6 +51,45 @@ static void example_espnow_deinit(example_espnow_send_param_t *send_param);
 
 static uint16_t recent_key_value = 0;
 static uint16_t send_key_value = 0;
+
+static const int RX_BUF_SIZE = 1024;
+static uint8_t s_leak_alert[1] = {0x01};
+
+void uart_init(void)
+{
+    const uart_config_t uart_config = {
+        .baud_rate = CONFIG_UART_BAUD_RATE,
+        .data_bits = UART_DATA_8_BITS,
+        .parity = UART_PARITY_DISABLE,
+        .stop_bits = UART_STOP_BITS_1,
+        .flow_ctrl = UART_HW_FLOWCTRL_DISABLE,
+        .source_clk = UART_SCLK_DEFAULT,
+    };
+    // We won't use a buffer for sending data.
+    uart_driver_install(UART_NUM_1, RX_BUF_SIZE * 2, 0, 0, NULL, 0);
+    uart_param_config(UART_NUM_1, &uart_config);
+    uart_set_pin(UART_NUM_1, TXD_PIN, RXD_PIN, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE);
+}
+
+int leakAlert(uint8_t* mac_addr)
+{
+    const int txBytes = uart_write_bytes(UART_NUM_1, s_leak_alert, 1)
+        + uart_write_bytes(UART_NUM_1, mac_addr, ESP_NOW_ETH_ALEN);
+    return txBytes;
+}
+
+int bmeData(uint8_t* mac_addr, float temperature, float humidity, float pressure)
+{
+    uint8_t bytes[13];
+    bytes[0] = 0;
+    memcpy(bytes + 1, (unsigned char*) (&temperature), 4);
+    memcpy(bytes + 5, (unsigned char*) (&pressure), 4);
+    memcpy(bytes + 9, (unsigned char*) (&humidity), 4);
+
+    const int txBytes = uart_write_bytes(UART_NUM_1, bytes, 13)
+        + uart_write_bytes(UART_NUM_1, mac_addr, ESP_NOW_ETH_ALEN);
+    return txBytes;
+}
 
 /* WiFi should start before using ESPNOW */
 static void example_wifi_init(void)
@@ -143,7 +190,7 @@ int example_espnow_data_parse(uint8_t *data, uint16_t data_len)
     return -1;
 }
 
-int unicast_espnow_data_parse(uint8_t *data, uint16_t data_len)
+int unicast_espnow_data_parse(uint8_t *data, uint16_t data_len, uint8_t *mac_addr)
 {
     uint16_t crc, crc_cal = 0;
     uint8_t type = 0;
@@ -162,7 +209,21 @@ int unicast_espnow_data_parse(uint8_t *data, uint16_t data_len)
             recent_key_value = buf->key;
             if (buf->leak_data == LEAK_DETECTED) {
                 ESP_LOGI(TAG, "Leak detected!");
+                leakAlert(mac_addr);
             }
+            return 1;
+        }
+        return -1;
+    }
+    if(type == UNICAST_TYPE_ENVIRONMENT) {
+        espnow_environment_data_t *buf = (espnow_environment_data_t *)data;
+        uint16_t crc, crc_cal = 0;
+        crc = buf->crc;
+        buf->crc = 0;
+        crc_cal = esp_crc16_le(UINT16_MAX, (uint8_t const *)buf, sizeof(espnow_leak_data_t));
+        if (crc_cal == crc) {
+            recent_key_value = buf->key;
+            bmeData(mac_addr, buf->temperature, buf->humidity, buf->pressure);
             return 1;
         }
         return -1;
@@ -252,7 +313,7 @@ static void example_espnow_task(void *pvParameter)
             {
                 example_espnow_event_recv_cb_t *recv_cb = &evt.info.recv_cb;
 
-                ret = unicast_espnow_data_parse(recv_cb->data, recv_cb->data_len);
+                ret = unicast_espnow_data_parse(recv_cb->data, recv_cb->data_len, recv_cb->mac_addr);
                 free(recv_cb->data);
                 if (ret == 1) {
                     ESP_LOGI(TAG, "Receive unicast data from: "MACSTR"", MAC2STR(recv_cb->mac_addr));
@@ -363,4 +424,5 @@ void app_main(void)
 
     example_wifi_init();
     example_espnow_init();
+    uart_init();
 }
