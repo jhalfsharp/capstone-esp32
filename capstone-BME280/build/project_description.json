@@ -1,7 +1,7 @@
 {
     "version":            "1.2",
     "project_name":       "BME280",
-    "project_version":    "6a6709a-dirty",
+    "project_version":    "d3b4a9f-dirty",
     "project_path":       "/home/june/Documents/projects/capstone-esp32/capstone-BME280",
     "idf_path":           "/home/june/esp/v5.5.2/esp-idf",
     "build_dir":          "/home/june/Documents/projects/capstone-esp32/capstone-BME280/build",

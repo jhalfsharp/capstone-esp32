@@ -425,4 +425,5 @@ void app_main(void)
     wifi_init();
     espnow_init();
     uart_init();
+    uart_write_bytes(UART_NUM_1, TAG, 8);
 }

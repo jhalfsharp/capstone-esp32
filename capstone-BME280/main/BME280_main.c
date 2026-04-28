@@ -436,7 +436,7 @@ static esp_err_t espnow_init(void)
     send_param->magic = esp_random();
     send_param->count = CONFIG_ESPNOW_SEND_COUNT;
     send_param->key = 0;
-    send_param->len = sizeof(espnow_data_t);
+    send_param->len = sizeof(espnow_environment_data_t);
     send_param->buffer = malloc(CONFIG_ESPNOW_SEND_LEN);
     if (send_param->buffer == NULL) {
         ESP_LOGE(TAG, "Malloc send buffer fail");
